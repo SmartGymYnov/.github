@@ -14,8 +14,9 @@
 5. [Application Mobile (React Native / Expo)](#5-application-mobile-react-native--expo)
 6. [Application Scanner (Expo)](#6-application-scanner-expo)
 7. [Base de données](#7-base-de-données)
-8. [Installation & lancement](#8-installation--lancement)
-9. [Variables d'environnement](#9-variables-denvironnement)
+8. [Cas d'usage fonctionnels](#8-cas-dusage-fonctionnels)
+9. [Installation & lancement](#9-installation--lancement)
+10. [Variables d'environnement](#10-variables-denvironnement)
 
 ---
 
@@ -517,7 +518,402 @@ WorkoutLogOptionalSession     — SessionId nullable + ON DELETE SET NULL
 
 ---
 
-## 8. Installation & lancement
+## 8. Cas d'usage fonctionnels
+
+### Acteurs du système
+
+| Acteur | Description | Application |
+|---|---|---|
+| **Membre** | Client inscrit à la salle de sport | Mobile |
+| **Coach** | Animateur de cours | Web |
+| **Admin** | Gestionnaire de la salle | Web |
+| **Staff** | Personnel d'accueil | Scanner |
+| **Système** | API SmartGym | Backend |
+| **Stripe** | Service de paiement externe | — |
+
+### Sommaire des cas d'usage
+
+| ID | Cas d'usage | Acteur | Application |
+|---|---|---|---|
+| UC01 | S'inscrire | Membre | Mobile |
+| UC02 | Se connecter | Tous | Mobile / Web / Scanner |
+| UC03 | Consulter les cours | Membre | Mobile |
+| UC04 | Réserver une séance | Membre | Mobile |
+| UC05 | Annuler une réservation | Membre | Mobile |
+| UC06 | Générer un QR code de check-in | Membre | Mobile |
+| UC07 | Valider un check-in par QR | Staff | Scanner |
+| UC08 | Souscrire à un abonnement | Membre | Mobile |
+| UC09 | Gérer son abonnement | Membre | Mobile |
+| UC10 | Démarrer un entraînement | Membre | Mobile |
+| UC11 | Consulter l'historique d'entraînement | Membre | Mobile |
+| UC12 | Modifier son profil | Membre | Mobile |
+| UC13 | Créer un cours | Coach / Admin | Web |
+| UC14 | Planifier une séance | Coach / Admin | Web |
+| UC15 | Consulter ses séances (coach) | Coach | Web |
+| UC16 | Gérer les membres | Admin | Web |
+| UC17 | Consulter les réservations | Admin | Web |
+| UC18 | Consulter les check-ins du jour | Admin | Web |
+| UC19 | Gérer les abonnements | Admin | Web |
+| UC20 | Consulter le tableau de bord | Admin | Web |
+
+---
+
+### UC01 — S'inscrire
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : L'utilisateur n'a pas de compte SmartGym
+
+**Scénario nominal**
+1. L'utilisateur ouvre l'application mobile
+2. Il appuie sur "Créer un compte"
+3. Il saisit son prénom, nom, adresse e-mail et mot de passe
+4. Il soumet le formulaire
+5. Le système valide les données et crée le compte avec le rôle "Client"
+6. Le système retourne un token JWT
+7. L'utilisateur est redirigé vers l'écran d'accueil
+
+**Scénarios alternatifs**
+- **E1 — E-mail déjà utilisé** : Le système retourne une erreur 409, un message "E-mail déjà utilisé" s'affiche
+- **E2 — Données invalides** : Le formulaire affiche les erreurs de validation en temps réel
+
+---
+
+### UC02 — Se connecter
+
+**Acteur principal** : Membre / Coach / Admin / Staff | **Application** : Mobile, Web, Scanner  
+**Préconditions** : L'utilisateur possède un compte actif
+
+**Scénario nominal**
+1. L'utilisateur saisit son e-mail et mot de passe
+2. Le système vérifie les credentials (BCrypt)
+3. Le système génère un JWT valide 8 heures
+4. L'utilisateur est redirigé selon son rôle : Membre → Accueil mobile, Admin → Dashboard web, Coach → Planning web, Staff → Écran scanner
+
+**Scénarios alternatifs**
+- **E1 — Credentials incorrects** : Message "Email ou mot de passe incorrect"
+- **E2 — Coach/Admin sur mobile** : Accès bloqué, message "Cette application est réservée aux membres"
+- **E3 — Token expiré** : Déconnexion automatique et retour à l'écran de connexion
+
+---
+
+### UC03 — Consulter les cours
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté
+
+**Scénario nominal**
+1. Le membre accède à l'onglet "Cours"
+2. Le système charge la liste de tous les cours disponibles
+3. Le membre voit les cartes cours (nom, durée, coach, niveau)
+4. Il peut rechercher un cours par nom via la barre de recherche
+5. Il appuie sur un cours pour voir son détail et ses prochaines séances
+
+**Scénarios alternatifs**
+- **E1 — Aucun cours** : Message "Aucun cours disponible"
+- **E2 — Recherche sans résultat** : Message "Aucun cours trouvé pour cette recherche"
+
+---
+
+### UC04 — Réserver une séance
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté, la séance doit avoir des places disponibles
+
+**Scénario nominal**
+1. Le membre consulte le détail d'un cours (UC03)
+2. Il voit la liste des prochaines séances (futures uniquement)
+3. Il sélectionne une séance et appuie sur "Réserver"
+4. Le système vérifie les places disponibles (`currentBookings < maxCapacity`)
+5. Le système crée la réservation et incrémente `currentBookings`
+6. Une confirmation s'affiche : "Réservation confirmée !"
+7. La séance apparaît dans l'onglet "Réservations"
+
+**Scénarios alternatifs**
+- **E1 — Séance complète** : Le bouton "Réserver" est désactivé, message "Complet"
+- **E2 — Déjà réservé** : Message "Vous avez déjà réservé cette séance"
+
+---
+
+### UC05 — Annuler une réservation
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté, avoir une réservation active
+
+**Scénario nominal**
+1. Le membre accède à l'onglet "Réservations"
+2. Il appuie sur "Annuler" sur une réservation future
+3. Le système marque la réservation comme annulée (`isCancelled = true`)
+4. Le système décrémente `currentBookings` de la séance
+5. La réservation disparaît de la liste "À venir"
+
+**Scénarios alternatifs**
+- **E1 — Réservation passée** : Le bouton d'annulation n'est pas affiché
+
+---
+
+### UC06 — Générer un QR code de check-in
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté
+
+**Scénario nominal**
+1. Le membre accède à l'onglet "Check-In"
+2. Le système génère un token unique via `POST /api/checkins/generate-qr`
+3. Un QR code est affiché à l'écran avec un compte à rebours de 60 secondes
+4. Le membre présente le QR code au staff à l'accueil
+5. À l'expiration (60 s), un nouveau QR code est automatiquement régénéré
+
+**Scénarios alternatifs**
+- **E1 — Perte de connexion** : Message d'erreur, bouton "Réessayer" affiché
+
+---
+
+### UC07 — Valider un check-in par QR
+
+**Acteur principal** : Staff | **Application** : Scanner  
+**Préconditions** : Le staff est connecté, le membre a un QR code valide (UC06)
+
+**Scénario nominal**
+1. Le staff ouvre l'application Scanner et se connecte
+2. La caméra s'active en mode scan continu
+3. Le staff pointe la caméra vers le QR code du membre
+4. Le système appelle `POST /api/checkins/validate-qr`
+5. Le backend vérifie le token (existence, expiration < 60 s)
+6. L'écran affiche en vert : nom du membre + "Check-in validé !"
+7. Le check-in est enregistré en base avec l'heure d'entrée
+
+**Scénarios alternatifs**
+- **E1 — Token expiré** : Écran rouge "QR code expiré"
+- **E2 — Token invalide** : Écran rouge "QR code invalide"
+- **E3 — Déjà utilisé** : Écran rouge "Ce QR code a déjà été utilisé"
+
+---
+
+### UC08 — Souscrire à un abonnement
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté, ne pas avoir d'abonnement actif
+
+**Scénario nominal**
+1. Le membre accède à son profil et appuie sur "S'abonner"
+2. Le backend crée une session Stripe Checkout et retourne l'URL
+3. Une WebView in-app s'ouvre sur la page de paiement Stripe
+4. Le membre valide le paiement
+5. Stripe appelle le webhook backend qui crée l'abonnement en base
+6. La carte d'abonnement s'affiche sur le profil (plan, date d'expiration)
+
+**Scénarios alternatifs**
+- **E1 — Paiement refusé** : Stripe affiche un message d'erreur, la WebView reste ouverte
+- **E2 — Fermeture de la WebView** : Le membre revient au profil sans abonnement
+
+---
+
+### UC09 — Gérer son abonnement
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté, avoir un abonnement actif
+
+**Scénario nominal**
+1. Le membre appuie sur "Gérer mon abonnement" depuis son profil
+2. Une WebView s'ouvre sur le portail Stripe Customer Portal
+3. Le membre peut modifier son plan, ses moyens de paiement ou résilier
+4. Stripe notifie le backend via webhook qui met à jour l'abonnement en base
+
+**Scénarios alternatifs**
+- **E1 — Résiliation** : Le statut passe à "Expiré" sur le profil après la date de fin
+
+---
+
+### UC10 — Démarrer un entraînement
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté
+
+**Scénario nominal**
+1. Le membre appuie sur "Démarrer un entraînement" dans l'onglet Entraînement
+2. Un écran modal s'ouvre avec un chronomètre
+3. Il ajoute des exercices via le sélecteur (recherche + filtre par groupe musculaire)
+4. Pour chaque exercice, il saisit poids et répétitions par série
+5. Le système affiche le poids/reps du dernier entraînement (mémoire des performances)
+6. Il coche ✓ pour valider chaque série
+7. Il appuie sur "Terminer" — le log et tous les exercices sont enregistrés via l'API
+
+**Scénarios alternatifs**
+- **E1 — Aucun exercice** : Le bouton "Terminer" est désactivé
+- **E2 — Suppression d'une série** : Appui long sur la ligne → suppression
+- **E3 — Suppression d'un exercice** : Bouton poubelle sur le bloc
+
+---
+
+### UC11 — Consulter l'historique d'entraînement
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté
+
+**Scénario nominal**
+1. Le membre accède à l'onglet "Entraînement"
+2. Le système charge l'historique trié par date décroissante
+3. Chaque carte affiche : date, exercices, séries, volume total en kg
+
+**Scénarios alternatifs**
+- **E1 — Aucun entraînement** : Message "Démarre ton premier entraînement"
+
+---
+
+### UC12 — Modifier son profil
+
+**Acteur principal** : Membre | **Application** : Mobile  
+**Préconditions** : Être connecté
+
+**Scénario nominal**
+1. Le membre accède à l'onglet "Profil" et appuie sur "Modifier"
+2. Il modifie prénom, nom ou e-mail
+3. Le système appelle `PUT /api/users/{id}` et met à jour les données
+
+**Scénarios alternatifs**
+- **E1 — E-mail déjà utilisé** : Message "Cet e-mail est déjà associé à un autre compte"
+
+---
+
+### UC13 — Créer un cours
+
+**Acteur principal** : Coach / Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Coach ou Admin
+
+**Scénario nominal**
+1. Le coach clique sur "Nouveau cours"
+2. Il remplit le formulaire (nom, description, durée, capacité max, coach assigné)
+3. Le système appelle `POST /api/courses` et crée le cours
+
+**Scénarios alternatifs**
+- **E1 — Champs manquants** : Validation FluentValidation, erreurs affichées
+
+---
+
+### UC14 — Planifier une séance
+
+**Acteur principal** : Coach / Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Coach ou Admin, au moins un cours existant
+
+**Scénario nominal**
+1. Le coach clique sur "Nouvelle séance"
+2. Il sélectionne un cours, une date et une heure de début
+3. Le système crée la séance avec `currentBookings = 0`
+
+**Scénarios alternatifs**
+- **E1 — Date passée** : Message "La date doit être dans le futur"
+
+---
+
+### UC15 — Consulter ses séances (coach)
+
+**Acteur principal** : Coach | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Coach
+
+**Scénario nominal**
+1. Le coach accède à "Mes réservations"
+2. Le système charge les réservations liées à ses cours
+3. Il voit les membres inscrits par séance avec le taux de remplissage
+
+---
+
+### UC16 — Gérer les membres
+
+**Acteur principal** : Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Admin
+
+**Scénario nominal**
+1. L'admin accède à la page "Membres"
+2. Il peut rechercher par nom ou e-mail
+3. Il peut supprimer un membre via `DELETE /api/users/{id}`
+
+**Scénarios alternatifs**
+- **E1 — Membre avec réservations actives** : La suppression annule les réservations en cascade
+
+---
+
+### UC17 — Consulter les réservations
+
+**Acteur principal** : Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Admin
+
+**Scénario nominal**
+1. L'admin accède à "Réservations"
+2. Il voit toutes les réservations avec nom du membre et cours
+3. Il peut filtrer par date, cours ou statut (annulées)
+
+---
+
+### UC18 — Consulter les check-ins du jour
+
+**Acteur principal** : Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Admin
+
+**Scénario nominal**
+1. L'admin accède à la page "Check-In"
+2. Le système charge tous les check-ins du jour via `GET /api/checkins/today`
+3. L'admin voit : nom du membre, heure d'entrée, compteur total
+
+---
+
+### UC19 — Gérer les abonnements
+
+**Acteur principal** : Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Admin
+
+**Scénario nominal**
+1. L'admin accède à "Abonnements"
+2. Il voit chaque abonnement avec le nom complet du membre (jointure Users), plan, dates, progression, statut
+3. Il peut filtrer par plan ou par statut et supprimer un abonnement
+
+**Scénarios alternatifs**
+- **E1 — Abonnement Stripe actif** : La suppression en base ne résilie pas Stripe (à gérer manuellement)
+
+---
+
+### UC20 — Consulter le tableau de bord
+
+**Acteur principal** : Admin | **Application** : Web  
+**Préconditions** : Être connecté avec le rôle Admin
+
+**Scénario nominal**
+1. L'admin accède au Dashboard
+2. Le système retourne via `GET /api/stats/dashboard` :
+   - Nombre total de membres, séances du jour, réservations du jour, check-ins du jour
+   - Taux de remplissage moyen (%)
+   - Courbe des réservations sur les 7 derniers jours
+   - Prochaines séances du jour
+
+---
+
+### Matrice acteurs / cas d'usage
+
+|  | Membre | Coach | Admin | Staff |
+|---|---|---|---|---|
+| UC01 S'inscrire | ✅ | | | |
+| UC02 Se connecter | ✅ | ✅ | ✅ | ✅ |
+| UC03 Consulter les cours | ✅ | | | |
+| UC04 Réserver une séance | ✅ | | | |
+| UC05 Annuler une réservation | ✅ | | | |
+| UC06 Générer QR code | ✅ | | | |
+| UC07 Valider QR code | | | | ✅ |
+| UC08 Souscrire | ✅ | | | |
+| UC09 Gérer abonnement | ✅ | | | |
+| UC10 Démarrer entraînement | ✅ | | | |
+| UC11 Historique entraînement | ✅ | | | |
+| UC12 Modifier profil | ✅ | | | |
+| UC13 Créer un cours | | ✅ | ✅ | |
+| UC14 Planifier une séance | | ✅ | ✅ | |
+| UC15 Consulter ses séances | | ✅ | | |
+| UC16 Gérer les membres | | | ✅ | |
+| UC17 Consulter réservations | | | ✅ | |
+| UC18 Consulter check-ins | | | ✅ | |
+| UC19 Gérer abonnements | | | ✅ | |
+| UC20 Tableau de bord | | | ✅ | |
+
+---
+
+## 9. Installation & lancement
 
 ### Prérequis
 
@@ -568,7 +964,7 @@ npx expo start
 
 ---
 
-## 9. Variables d'environnement
+## 10. Variables d'environnement
 
 ### Backend — `appsettings.json`
 
